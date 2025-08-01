@@ -203,80 +203,30 @@ jobs:
           -H "Content-Type: application/json" \
           -d @cbom.json > output.json
     
-    - name: Display CBOM summary
-      if: steps.retrieve.outputs.cbom_available == 'true'
-      env:
-        SCAN_URL: ${{ steps.vars.outputs.scan_url }}
-        BRANCH: ${{ steps.vars.outputs.branch }}
-        SUBFOLDER: ${{ steps.vars.outputs.subfolder }}
+    # Validate output.json is valid JSON
+    - name: Validate Compliance Output JSON
       run: |
-        echo "## 🔐 CBOM Scan Results" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "**Repository:** $SCAN_URL" >> $GITHUB_STEP_SUMMARY
-        echo "**Branch:** $BRANCH" >> $GITHUB_STEP_SUMMARY
-        
-        if [ -n "$SUBFOLDER" ]; then
-          echo "**Subfolder:** $SUBFOLDER" >> $GITHUB_STEP_SUMMARY
+        cat output.json
+        echo "Validating output.json..."
+        if ! jq empty output.json 2>jq_error.log; then
+          echo "::error::❌ output.json is not valid JSON."
+          echo "## Compliance Check Results" >> $GITHUB_STEP_SUMMARY
+          echo "❌ **Error** – output.json is not valid JSON. See jq_error.log for details." >> $GITHUB_STEP_SUMMARY
+          echo "--- jq error log ---"
+          cat jq_error.log
+          exit 1
         fi
-        
-        echo "" >> $GITHUB_STEP_SUMMARY
-        
-        # Extract basic stats from CBOM
-        if [ -f "cbom.json" ]; then
-          components_count=$(jq '.components | length' cbom.json 2>/dev/null || echo "0")
-          bom_format=$(jq -r '.bomFormat // "Unknown"' cbom.json 2>/dev/null)
-          spec_version=$(jq -r '.specVersion // "Unknown"' cbom.json 2>/dev/null)
-          
-          echo "**CBOM Format:** $bom_format v$spec_version" >> $GITHUB_STEP_SUMMARY
-          echo "**Cryptographic Assets Found:** $components_count" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "✅ CBOM successfully generated and uploaded as an artifact." >> $GITHUB_STEP_SUMMARY
+
+    # Parse JSON and check for "Not Quantum Safe" label
+    - name: Check Compliance Status
+      run: |
+        if jq -e '.globalComplianceStatus == false' output.json > /dev/null; then
+          echo "::error::❌ Not compliant – This CBOM does not comply with the policy \"quantum_safe\"."
+          echo "## Compliance Check Results" >> $GITHUB_STEP_SUMMARY
+          echo "❌ **Not compliant** – This CBOM does not comply with the policy \"quantum_safe\"." >> $GITHUB_STEP_SUMMARY
+          exit 1
+        else
+          echo "::notice::✅ Compliant – This CBOM complies with the policy \"quantum_safe\"."
+          echo "## Compliance Check Results" >> $GITHUB_STEP_SUMMARY
+          echo "✅ **Compliant** – This CBOM complies with the policy \"quantum_safe\"." >> $GITHUB_STEP_SUMMARY
         fi
-    
-    - name: Comment on PR (if PR event)
-      if: github.event_name == 'pull_request' && steps.retrieve.outputs.cbom_available == 'true'
-      env:
-        SCAN_URL: ${{ steps.vars.outputs.scan_url }}
-        BRANCH: ${{ steps.vars.outputs.branch }}
-        GITHUB_SERVER_URL: ${{ github.server_url }}
-        GITHUB_REPOSITORY: ${{ github.repository }}
-        GITHUB_RUN_NUMBER: ${{ github.run_number }}
-        GITHUB_RUN_ID: ${{ github.run_id }}
-      uses: actions/github-script@v7
-      with:
-        script: |
-          const fs = require('fs');
-          
-          try {
-            const cbom = JSON.parse(fs.readFileSync('cbom.json', 'utf8'));
-            const componentsCount = cbom.components ? cbom.components.length : 0;
-            const bomFormat = cbom.bomFormat || 'Unknown';
-            const specVersion = cbom.specVersion || 'Unknown';
-            
-            const comment = `## 🔐 CBOM Scan Results
-            
-            **Repository:** ${process.env.SCAN_URL}
-            **Branch:** ${process.env.BRANCH}
-            **CBOM Format:** ${bomFormat} v${specVersion}
-            **Cryptographic Assets Found:** ${componentsCount}
-            
-            ✅ CBOM successfully generated and is available as a workflow artifact.
-            
-            <details>
-            <summary>View scan details</summary>
-            
-            - **Scan URL:** ${process.env.SCAN_URL}
-            - **Branch:** ${process.env.BRANCH}
-            - **Workflow Run:** [#${process.env.GITHUB_RUN_NUMBER}](${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID})
-            
-            </details>`;
-            
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: comment
-            });
-          } catch (error) {
-            console.log('Error creating PR comment:', error);
-          }
