@@ -30,10 +30,6 @@ jobs:
           echo "GITHUB_SHA=${MAIN_SHA:0:7}" >> $GITHUB_ENV
           echo "Main branch SHA (first 7 chars): ${MAIN_SHA:0:7}"
         
-      - name: Build with Maven
-        # When scanning Java code, the build should be completed beforehand
-        run: mvn -B clean package -DskipTests
-
       - name: Create CBOM
         uses: PQCA/cbomkit-action@v2.1.1
         id: cbom
