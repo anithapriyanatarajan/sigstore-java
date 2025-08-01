@@ -29,9 +29,18 @@ jobs:
       # Save CBOM to test.json
       - name: Save CBOM to file
         run: |
-          cp ${{ steps.cbom.outputs.pattern }} test.json
-          echo "Saved CBOM to test.json"
-          ls -l test.json
+          # Find the first CBOM file and copy it
+          ls -la cbom/
+          cbom_file=$(find cbom -name "cbom*.json" | head -1)
+          if [ -n "$cbom_file" ]; then
+            cp "$cbom_file" test.json
+            echo "Saved CBOM from $cbom_file to test.json"
+            ls -l test.json
+          else
+            echo "No CBOM file found in cbom/ directory"
+            ls -la cbom/
+            exit 1
+          fi
 
       # Display CBOM content
       - name: Display CBOM Content
