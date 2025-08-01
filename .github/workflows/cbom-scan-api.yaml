@@ -161,7 +161,7 @@ jobs:
           
           response=$(curl -s -w "HTTPSTATUS:%{http_code}" \
             -H "Accept: application/json" \
-            "$CBOMKIT_API_URL/api/v1/cbom/$project_id_encoded")
+            "$CBOMKIT_API_URL/api/v1/cbom/$project_id")
           
           http_code=$(echo "$response" | tr -d '\n' | sed -e 's/.*HTTPSTATUS://')
           body=$(echo "$response" | sed -e 's/HTTPSTATUS:.*//g')
