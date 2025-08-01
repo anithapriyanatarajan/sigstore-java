@@ -24,8 +24,9 @@ jobs:
         
       - name: Set environment variables
         run: |
-          echo "GITHUB_TREF_NAME=main" >> $GITHUB_ENV
+          echo "GITHUB_REF_NAME=main" >> $GITHUB_ENV
           # Get the SHA of the main branch specifically
+          git fetch origin main
           MAIN_SHA=$(git rev-parse origin/main)
           echo "GITHUB_SHA=${MAIN_SHA:0:7}" >> $GITHUB_ENV
           echo "Main branch SHA (first 7 chars): ${MAIN_SHA:0:7}"
@@ -34,7 +35,10 @@ jobs:
         uses: PQCA/cbomkit-action@v2.1.1
         id: cbom
         env:
-          CBOMKIT_LANGUAGES: java  # Only scan Python code
+          CBOMKIT_LANGUAGES: java  # Only scan Java code
+          GITHUB_REF_NAME: ${{ env.GITHUB_REF_NAME }}
+          GITHUB_SHA: ${{ env.GITHUB_SHA }}
+
 
       # Save CBOM to test.json
       - name: Save CBOM to file
