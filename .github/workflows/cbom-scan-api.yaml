@@ -139,8 +139,14 @@ jobs:
         echo "Waiting for scan to complete..."
         sleep 30  # Wait for scan to process
         
-        # Extract project identifier from scan URL
-        project_id=$(echo "$SCAN_URL" | sed 's|https://||' | sed 's|http://||')
+        # Extract repository owner and name from scan URL
+        repo_path=$(echo "$SCAN_URL" | sed 's|https://github.com/||' | sed 's|http://github.com/||')
+        
+        # Get current commit hash
+        commit_hash=$(git rev-parse HEAD | cut -c1-7)
+        
+        # Create project identifier in package URL format
+        project_id="pkg:github/${repo_path}@${commit_hash}"
         project_id_encoded=$(echo "$project_id" | jq -rR @uri)
         
         echo "Project ID: $project_id"
