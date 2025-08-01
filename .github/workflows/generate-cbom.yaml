@@ -1,0 +1,78 @@
+name: Generate CBOM
+
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  push:
+    branches:
+      - test-cbomkit
+
+jobs:
+  cbom-scan:
+    runs-on: ubuntu-latest
+    name: CBOM generation
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Create CBOM
+        uses: PQCA/cbomkit-action@v2.1.0
+        id: cbom
+        env:
+          CBOMKIT_LANGUAGES: python  # Only scan Python code
+
+      # Save CBOM to test.json
+      - name: Save CBOM to file
+        run: |
+          cp ${{ steps.cbom.outputs.pattern }} test.json
+          echo "Saved CBOM to test.json"
+          ls -l test.json
+
+      # Display CBOM content
+      - name: Display CBOM Content
+        run: |
+          echo "CBOM Content:"
+          cat test.json
+
+      # Upload and Check Compliance
+      - name: Upload and Check Compliance
+        run: |
+          # Check compliance
+          echo "Checking compliance..."
+          curl -X POST \
+            "https://1b0849357ee9.ngrok-free.app/api/v1/compliance/check?policyIdentifier=quantum_safe" \
+            -H "Content-Type: application/json" \
+            -d @test.json > output.json
+
+      # Validate output.json is valid JSON
+      - name: Validate Compliance Output JSON
+        run: |
+          cat output.json
+          echo "Validating output.json..."
+          if ! jq empty output.json 2>jq_error.log; then
+            echo "::error::❌ output.json is not valid JSON."
+            echo "## Compliance Check Results" >> $GITHUB_STEP_SUMMARY
+            echo "❌ **Error** – output.json is not valid JSON. See jq_error.log for details." >> $GITHUB_STEP_SUMMARY
+            echo "--- jq error log ---"
+            cat jq_error.log
+            exit 1
+          fi
+
+      # Parse JSON and check for "Not Quantum Safe" label
+      - name: Check Compliance Status
+        run: |
+          if jq -e '.globalComplianceStatus == false' output.json > /dev/null; then
+            echo "::error::❌ Not compliant – This CBOM does not comply with the policy \"quantum_safe\"."
+            echo "## Compliance Check Results" >> $GITHUB_STEP_SUMMARY
+            echo "❌ **Not compliant** – This CBOM does not comply with the policy \"quantum_safe\"." >> $GITHUB_STEP_SUMMARY
+            exit 1
+          else
+            echo "::notice::✅ Compliant – This CBOM complies with the policy \"quantum_safe\"."
+            echo "## Compliance Check Results" >> $GITHUB_STEP_SUMMARY
+            echo "✅ **Compliant** – This CBOM complies with the policy \"quantum_safe\"." >> $GITHUB_STEP_SUMMARY
+          fi

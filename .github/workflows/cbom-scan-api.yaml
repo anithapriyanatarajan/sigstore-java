@@ -1,0 +1,262 @@
+name: CBOM Scan
+
+on:
+  push:
+    branches: [ test-cbomkit ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      scan_url:
+        description: 'Repository URL to scan (defaults to current repo)'
+        required: false
+        type: string
+      branch:
+        description: 'Branch to scan (defaults to current branch)'
+        required: false
+        type: string
+      subfolder:
+        description: 'Subfolder to scan (optional)'
+        required: false
+        type: string
+
+env:
+  CBOMKIT_API_URL: ${{ inputs.scan_url || 'https://1b0849357ee9.ngrok-free.app' }}
+
+jobs:
+  cbom-scan:
+    runs-on: ubuntu-latest
+    name: Generate CBOM
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Set up variables
+      id: vars
+      env:
+        INPUT_SCAN_URL: ${{ github.event.inputs.scan_url }}
+        INPUT_BRANCH: ${{ github.event.inputs.branch }}
+        INPUT_SUBFOLDER: ${{ github.event.inputs.subfolder }}
+        GITHUB_SERVER_URL: ${{ github.server_url }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
+        GITHUB_REF_NAME: ${{ github.ref_name }}
+      run: |
+        # Set scan URL (use input or current repo)
+        if [ -n "$INPUT_SCAN_URL" ]; then
+          echo "scan_url=$INPUT_SCAN_URL" >> $GITHUB_OUTPUT
+        else
+          echo "scan_url=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" >> $GITHUB_OUTPUT
+        fi
+        
+        # Set branch (use input or current branch)
+        if [ -n "$INPUT_BRANCH" ]; then
+          echo "branch=$INPUT_BRANCH" >> $GITHUB_OUTPUT
+        else
+          echo "branch=$GITHUB_REF_NAME" >> $GITHUB_OUTPUT
+        fi
+        
+        # Set subfolder if provided
+        if [ -n "$INPUT_SUBFOLDER" ]; then
+          echo "subfolder=$INPUT_SUBFOLDER" >> $GITHUB_OUTPUT
+        else
+          echo "subfolder=" >> $GITHUB_OUTPUT
+        fi
+    
+    - name: Prepare scan request
+      id: scan-request
+      env:
+        SCAN_URL: ${{ steps.vars.outputs.scan_url }}
+        BRANCH: ${{ steps.vars.outputs.branch }}
+        SUBFOLDER: ${{ steps.vars.outputs.subfolder }}
+        GITHUB_SERVER_URL: ${{ github.server_url }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        # Create scan request JSON
+        scan_request=$(cat <<EOF
+        {
+          "scanUrl": "$SCAN_URL",
+          "branch": "$BRANCH"
+        }
+        EOF
+        )
+        
+        # Add subfolder if specified
+        if [ -n "$SUBFOLDER" ]; then
+          scan_request=$(echo "$scan_request" | jq --arg subfolder "$SUBFOLDER" '. + {subfolder: $subfolder}')
+        fi
+        
+        # Add GitHub token for authentication if scanning current repo
+        if [[ "$SCAN_URL" == "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" ]]; then
+          scan_request=$(echo "$scan_request" | jq --arg token "$GITHUB_TOKEN" '. + {credentials: {pat: $token}}')
+        fi
+        
+        # Properly encode JSON for GitHub Actions output (compact format)
+        scan_request_compact=$(echo "$scan_request" | jq -c '.')
+        echo "request=$scan_request_compact" >> $GITHUB_OUTPUT
+        echo "Scan request prepared:"
+        echo "$scan_request" | jq '.'
+    
+    - name: Trigger CBOM scan
+      id: scan
+      env:
+        SCAN_REQUEST: ${{ steps.scan-request.outputs.request }}
+      run: |
+        echo "Initiating CBOM scan..."
+        echo "API URL: $CBOMKIT_API_URL/api/v1/scan"
+        echo "Request: $SCAN_REQUEST"
+        
+        response=$(curl -s -w "HTTPSTATUS:%{http_code}" \
+          -X POST \
+          -H "Content-Type: application/json" \
+          -d "$SCAN_REQUEST" \
+          "$CBOMKIT_API_URL/api/v1/scan")
+        
+        http_code=$(echo "$response" | tr -d '\n' | sed -e 's/.*HTTPSTATUS://')
+        body=$(echo "$response" | sed -e 's/HTTPSTATUS:.*//g')
+        
+        echo "HTTP Status: $http_code"
+        echo "Response: $body"
+        
+        if [ "$http_code" -eq 202 ]; then
+          echo "✅ CBOM scan initiated successfully"
+          echo "status=success" >> $GITHUB_OUTPUT
+        else
+          echo "❌ CBOM scan failed with status $http_code"
+          echo "status=failed" >> $GITHUB_OUTPUT
+          exit 1
+        fi
+    
+    - name: Wait and retrieve CBOM
+      if: steps.scan.outputs.status == 'success'
+      id: retrieve
+      env:
+        SCAN_URL: ${{ steps.vars.outputs.scan_url }}
+      run: |
+        echo "Waiting for scan to complete..."
+        sleep 30  # Wait for scan to process
+        
+        # Extract project identifier from scan URL
+        project_id=$(echo "$SCAN_URL" | sed 's|https://||' | sed 's|http://||')
+        project_id_encoded=$(echo "$project_id" | jq -rR @uri)
+        
+        echo "Project ID: $project_id"
+        echo "Encoded Project ID: $project_id_encoded"
+        
+        # Try to retrieve the CBOM
+        max_attempts=12  # 6 minutes total (12 * 30s)
+        attempt=1
+        
+        while [ $attempt -le $max_attempts ]; do
+          echo "Attempt $attempt/$max_attempts to retrieve CBOM..."
+          
+          response=$(curl -s -w "HTTPSTATUS:%{http_code}" \
+            -H "Accept: application/json" \
+            "$CBOMKIT_API_URL/api/v1/cbom/$project_id_encoded")
+          
+          http_code=$(echo "$response" | tr -d '\n' | sed -e 's/.*HTTPSTATUS://')
+          body=$(echo "$response" | sed -e 's/HTTPSTATUS:.*//g')
+          
+          if [ "$http_code" -eq 200 ] && [ -n "$body" ] && [ "$body" != "null" ]; then
+            echo "✅ CBOM retrieved successfully"
+            echo "$body" > cbom.json
+            echo "cbom_available=true" >> $GITHUB_OUTPUT
+            break
+          else
+            echo "⏳ CBOM not ready yet (HTTP $http_code), waiting..."
+            sleep 30
+            ((attempt++))
+          fi
+        done
+        
+        if [ $attempt -gt $max_attempts ]; then
+          echo "⚠️ CBOM retrieval timed out after $max_attempts attempts"
+          echo "cbom_available=false" >> $GITHUB_OUTPUT
+        fi
+    
+    - name: Upload CBOM artifact
+      if: steps.retrieve.outputs.cbom_available == 'true'
+      uses: actions/upload-artifact@v4
+      with:
+        name: cbom-${{ github.run_number }}
+        path: cbom.json
+        retention-days: 30
+    
+    - name: Display CBOM summary
+      if: steps.retrieve.outputs.cbom_available == 'true'
+      env:
+        SCAN_URL: ${{ steps.vars.outputs.scan_url }}
+        BRANCH: ${{ steps.vars.outputs.branch }}
+        SUBFOLDER: ${{ steps.vars.outputs.subfolder }}
+      run: |
+        echo "## 🔐 CBOM Scan Results" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "**Repository:** $SCAN_URL" >> $GITHUB_STEP_SUMMARY
+        echo "**Branch:** $BRANCH" >> $GITHUB_STEP_SUMMARY
+        
+        if [ -n "$SUBFOLDER" ]; then
+          echo "**Subfolder:** $SUBFOLDER" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        echo "" >> $GITHUB_STEP_SUMMARY
+        
+        # Extract basic stats from CBOM
+        if [ -f "cbom.json" ]; then
+          components_count=$(jq '.components | length' cbom.json 2>/dev/null || echo "0")
+          bom_format=$(jq -r '.bomFormat // "Unknown"' cbom.json 2>/dev/null)
+          spec_version=$(jq -r '.specVersion // "Unknown"' cbom.json 2>/dev/null)
+          
+          echo "**CBOM Format:** $bom_format v$spec_version" >> $GITHUB_STEP_SUMMARY
+          echo "**Cryptographic Assets Found:** $components_count" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "✅ CBOM successfully generated and uploaded as an artifact." >> $GITHUB_STEP_SUMMARY
+        fi
+    
+    - name: Comment on PR (if PR event)
+      if: github.event_name == 'pull_request' && steps.retrieve.outputs.cbom_available == 'true'
+      env:
+        SCAN_URL: ${{ steps.vars.outputs.scan_url }}
+        BRANCH: ${{ steps.vars.outputs.branch }}
+        GITHUB_SERVER_URL: ${{ github.server_url }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
+        GITHUB_RUN_NUMBER: ${{ github.run_number }}
+        GITHUB_RUN_ID: ${{ github.run_id }}
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          
+          try {
+            const cbom = JSON.parse(fs.readFileSync('cbom.json', 'utf8'));
+            const componentsCount = cbom.components ? cbom.components.length : 0;
+            const bomFormat = cbom.bomFormat || 'Unknown';
+            const specVersion = cbom.specVersion || 'Unknown';
+            
+            const comment = `## 🔐 CBOM Scan Results
+            
+            **Repository:** ${process.env.SCAN_URL}
+            **Branch:** ${process.env.BRANCH}
+            **CBOM Format:** ${bomFormat} v${specVersion}
+            **Cryptographic Assets Found:** ${componentsCount}
+            
+            ✅ CBOM successfully generated and is available as a workflow artifact.
+            
+            <details>
+            <summary>View scan details</summary>
+            
+            - **Scan URL:** ${process.env.SCAN_URL}
+            - **Branch:** ${process.env.BRANCH}
+            - **Workflow Run:** [#${process.env.GITHUB_RUN_NUMBER}](${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID})
+            
+            </details>`;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
+          } catch (error) {
+            console.log('Error creating PR comment:', error);
+          }
