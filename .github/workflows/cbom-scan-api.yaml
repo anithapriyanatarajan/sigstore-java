@@ -142,8 +142,8 @@ jobs:
         # Extract repository owner and name from scan URL
         repo_path=$(echo "$SCAN_URL" | sed 's|https://github.com/||' | sed 's|http://github.com/||')
         
-        # Get current commit hash
-        commit_hash=$(git rev-parse HEAD | cut -c1-7)
+        # Get commit hash from main branch
+        commit_hash=$(git rev-parse origin/main | cut -c1-7)
         
         # Create project identifier in package URL format
         project_id="pkg:github/${repo_path}@${commit_hash}"
@@ -161,7 +161,7 @@ jobs:
           
           response=$(curl -s -w "HTTPSTATUS:%{http_code}" \
             -H "Accept: application/json" \
-            "$CBOMKIT_API_URL/api/v1/cbom/$project_id")
+            "$CBOMKIT_API_URL/api/v1/cbom/$project_id_encoded")
           
           http_code=$(echo "$response" | tr -d '\n' | sed -e 's/.*HTTPSTATUS://')
           body=$(echo "$response" | sed -e 's/HTTPSTATUS:.*//g')
