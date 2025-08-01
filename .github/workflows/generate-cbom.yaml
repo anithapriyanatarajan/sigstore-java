@@ -6,7 +6,7 @@ on:
     types: [opened, synchronize, reopened]
   push:
     branches:
-      - test-cbomkit
+      - test-cbomkit2
 
 jobs:
   cbom-scan:

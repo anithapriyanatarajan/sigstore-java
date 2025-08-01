@@ -190,7 +190,18 @@ jobs:
       with:
         name: cbom-${{ github.run_number }}
         path: cbom.json
-        retention-days: 30
+        retention-days: 5
+    
+    # Upload and Check Compliance
+    - name: Upload and Check Compliance
+      if: steps.retrieve.outputs.cbom_available == 'true'
+      run: |
+        # Check compliance
+        echo "Checking compliance..."
+        curl -X POST \
+          "$CBOMKIT_API_URL/api/v1/compliance/check?policyIdentifier=quantum_safe" \
+          -H "Content-Type: application/json" \
+          -d @cbom.json > output.json
     
     - name: Display CBOM summary
       if: steps.retrieve.outputs.cbom_available == 'true'
