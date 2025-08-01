@@ -106,6 +106,8 @@ jobs:
         echo "Initiating CBOM scan..."
         echo "API URL: $CBOMKIT_API_URL/api/v1/scan"
         echo "Request: $SCAN_REQUEST"
+        echo "Full curl command:"
+        echo "curl -X POST -H \"Content-Type: application/json\" -d '$SCAN_REQUEST' '$CBOMKIT_API_URL/api/v1/scan'"
         
         response=$(curl -s -w "HTTPSTATUS:%{http_code}" \
           -X POST \
