@@ -87,4 +87,4 @@ $ ./gradlew javadoc
 $ "my-favorite-browser" ./sigstore-java/build/docs/javadoc/index.html
 ```
 
-test
+test-test
