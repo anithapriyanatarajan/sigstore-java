@@ -142,7 +142,8 @@ jobs:
         # Extract repository owner and name from scan URL
         repo_path=$(echo "$SCAN_URL" | sed 's|https://github.com/||' | sed 's|http://github.com/||')
         
-        # Get commit hash from main branch
+        # Fetch latest refs and get commit hash from main branch
+        git fetch origin main
         commit_hash=$(git rev-parse origin/main | cut -c1-7)
         
         # Create project identifier in package URL format
